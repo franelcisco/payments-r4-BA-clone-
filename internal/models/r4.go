@@ -42,3 +42,36 @@ type ValidateDebitInmediateResponse struct {
 	Message   string `json:"message"`
 	Status    bool   `json:"status"`
 }
+
+type DebitDirectAccountRequest struct {
+	DNI     string   `json:"dni"`
+	Name    string   `json:"name"`
+	Account string   `json:"account"`
+	Amount  *float64 `json:"amount"`
+	Concept string   `json:"concept"`
+}
+
+type DebitDirectAccountResponse struct {
+	ID        string `json:"id"`
+	Code      string `json:"code"`
+	Reference string `json:"reference"`
+	Message   string `json:"message"`
+	Success   bool   `json:"success"`
+}
+
+type DebitDirectPhoneRequest struct {
+	DNI     string   `json:"dni"`
+	Name    string   `json:"name"`
+	Phone   string   `json:"phone"`
+	Bank    string   `json:"bank"`
+	Amount  *float64 `json:"amount"`
+	Concept string   `json:"concept"`
+}
+
+type DebitDirectPhoneResponse struct {
+	ID        string `json:"id"`
+	Code      string `json:"code"`
+	Reference string `json:"reference"`
+	Message   string `json:"message"`
+	Success   bool   `json:"success"`
+}

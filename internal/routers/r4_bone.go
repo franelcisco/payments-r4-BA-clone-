@@ -23,4 +23,6 @@ func (p *r4Routes) SetRouter(router *gin.Engine, auth *middleware.WebhookAuthMid
 	group.POST("/validate-immediate-debit", p.r4Handler.HandleValidateImmediateDebit)
 	group.POST("/change-paid", p.r4Handler.HandleChangePaid)
 	group.GET("/get-operation/:id", p.r4Handler.HandleGetOperationByID)
+	group.POST("/direct-debit-account", p.r4Handler.HandleDirectDebitAccount)
+	group.POST("/direct-debit-phone", p.r4Handler.HandleDirectDebitPhone)
 }

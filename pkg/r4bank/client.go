@@ -27,13 +27,13 @@ func NewClient(
 	token string,
 	logger *zap.Logger,
 ) *RestClient {
-	uuidToken := GenerateAuthToken(token, "boneappetitR4ServiceSecretKey")
-	if !ValidateAuthToken(token, "boneappetitR4ServiceSecretKey", uuidToken) {
-		logger.Error("Invalid R4Bank token")
-		return nil
-	} else {
-		logger.Info("R4Bank token is valid", zap.String("uuidToken", uuidToken))
-	}
+	// uuidToken := GenerateAuthToken(token, "appaSaludR4ServiceSecretKey")
+	// if !ValidateAuthToken(token, "appaSaludR4ServiceSecretKey", uuidToken) {
+	// 	logger.Error("Invalid R4Bank token")
+	// 	return nil
+	// } else {
+	// 	logger.Error("R4Bank token is valid", zap.String("uuidToken", uuidToken))
+	// }
 	return &RestClient{
 		baseURL: endpoint,
 		token:   token,

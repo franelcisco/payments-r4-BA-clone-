@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"bone_appetit_r4_service/internal/models"
+	"bone_appetit_r4_service/internal/repositories"
 	"bone_appetit_r4_service/pkg/r4bank"
 )
 
@@ -19,10 +20,13 @@ type R4Service interface {
 	ValidateImmediateDebit(ctx context.Context, req *models.ValidateOTPRequest) (*models.ValidateDebitInmediateResponse, error)
 	ChangePaid(ctx context.Context, req *models.ChangePaidRequest) (*models.ChangePaidResponse, error)
 	GetOperationByID(ctx context.Context, operationID string) (*r4bank.GetOperationResponse, error)
+	DirectDebitAccount(ctx context.Context, req *models.DebitDirectAccountRequest) (*models.DebitDirectAccountResponse, error)
+	DirectDebitPhone(ctx context.Context, req *models.DebitDirectPhoneRequest) (*models.DebitDirectPhoneResponse, error)
 }
 
 type r4Service struct {
 	r4Client *r4bank.RestClient
+	bankRepo repositories.BankRepository
 	Logger   *zap.Logger
 }
 
@@ -33,32 +37,101 @@ var _DebitInmediateSpecialResponse = map[string]string{
 	"TKCM": "Codigo OTP inválido",
 	"AC00": "En espera de respuesta del banco",
 	"ACCP": "Transacción Exitosa",
+	"VE01": "Fuera del horario permitido",
+	"MD01": "No posee afiliación",
+	"BE01": "Datos del cliente no corresponden a la cuenta",
 }
 
 const _debitInmetiateGenericError = "ocurrió un error al procesar la solicitud"
 
+// Endpoints usados en las llamadas a r4Client.Do (privados al paquete)
+const (
+	bcvTasaUSDEndpoint             = "MBbcv"
+	changePaidEndpoint             = "MBvuelto"
+	generateOTPEndpoint            = "GenerarOtp"
+	validateImmediateDebitEndpoint = "DebitoInmediato"
+	getOperationByIDEndpoint       = "ConsultarOperaciones"
+	directDebitAccountEndpoint     = "TransferenciaOnline/DomiciliacionCNTA"
+	directDebitPhoneEndpoint       = "TransferenciaOnline/DomiciliacionCELE"
+	sendOperationTrueCode          = "202"
+	inBreakpointCode               = "AC00"
+)
+
 // NewR4Service creates a new R4Service
-func NewR4Service(logger *zap.Logger, r4Client *r4bank.RestClient) R4Service {
+func NewR4Service(logger *zap.Logger, r4Client *r4bank.RestClient, bankRepo repositories.BankRepository) R4Service {
 	return &r4Service{
 		r4Client: r4Client,
+		bankRepo: bankRepo,
 		Logger:   logger,
+	}
+}
+
+// getDirectDebitResponse is a helper function to process the response from direct debit operations
+func (r *r4Service) getDirectDebitResponse(ctx context.Context, id string) (*r4bank.GetOperationResponse, error) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	respCh := make(chan *r4bank.GetOperationResponse)
+
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				opResp, err := r.GetOperationByID(ctxWithTimeout, id)
+				if err != nil {
+					r.Logger.Error(err.Error(), zap.Any("operationID", id))
+					return
+				}
+
+				if opResp == nil {
+					r.Logger.Error("nil response from GetOperationByID", zap.Any("operationID", id))
+					return
+				}
+
+				if opResp.Code != inBreakpointCode {
+					respCh <- opResp
+					return
+				}
+			case <-ctxWithTimeout.Done():
+				r.Logger.Error("context timeout while waiting for operation to complete", zap.Any("operationID", id))
+				respCh <- nil
+				return
+			}
+		}
+	}()
+
+	select {
+	case opResp := <-respCh:
+		if opResp == nil {
+			return nil, errors.New("operation did not complete in time")
+		}
+		return opResp, nil
+
+	case <-ctxWithTimeout.Done():
+		r.Logger.Error("context timeout while waiting for operation to complete", zap.Any("operationID", id))
+		return nil, errors.New("operation did not complete in time")
 	}
 }
 
 // GetBCVTasaUSD retrieves the BCV exchange rate for USD
 func (r *r4Service) GetBCVTasaUSD(ctx context.Context) (*models.BCVTasaUSDResponse, error) {
-	var (
-		dateValue = time.Now().Format("2006-01-02")
-		currency  = "USD"
-	)
+	currency := "USD"
 
-	hmacInput := dateValue + currency
-	payload := map[string]string{
-		"Moneda":     currency,
-		"Fechavalor": dateValue,
+	workDay, err := r.bankRepo.NextWorkDayBounded(ctx, time.Now())
+	if err != nil {
+		r.Logger.Error("failed to get next work day", zap.Error(err))
+		return nil, fmt.Errorf("failed to get next work day: %w", err)
 	}
 
-	resp, err := r.r4Client.Do(ctx, hmacInput, payload, "MBbcv")
+	hmacInput := workDay.Format("2006-01-02") + currency
+	payload := map[string]string{
+		"Moneda":     currency,
+		"Fechavalor": workDay.Format("2006-01-02"),
+	}
+
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, bcvTasaUSDEndpoint)
 	if err != nil {
 		r.Logger.Error(err.Error(), zap.Any("payload", payload))
 		return nil, fmt.Errorf("error en request: %w", err)
@@ -92,7 +165,7 @@ func (r *r4Service) ChangePaid(ctx context.Context, req *models.ChangePaidReques
 		"Concepto":        req.Concept,
 	}
 
-	resp, err := r.r4Client.Do(ctx, hmacInput, payload, "MBvuelto")
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, changePaidEndpoint)
 	if err != nil {
 		r.Logger.Error(err.Error(), zap.Any("payload", payload))
 		return nil, fmt.Errorf("error en request: %w", err)
@@ -124,7 +197,7 @@ func (r *r4Service) GenerateOTP(ctx context.Context, req *models.OTPRequest) err
 		"Cedula":   req.DNI,
 	}
 
-	resp, err := r.r4Client.Do(ctx, hmacInput, payload, "GenerarOtp")
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, generateOTPEndpoint)
 	if err != nil {
 		r.Logger.Error(err.Error(), zap.Any("payload", payload))
 		return fmt.Errorf("error en request: %w", err)
@@ -136,7 +209,7 @@ func (r *r4Service) GenerateOTP(ctx context.Context, req *models.OTPRequest) err
 		return fmt.Errorf("error decodificando respuesta: %w", err)
 	}
 
-	if otpResp.Code != "202" {
+	if otpResp.Code != sendOperationTrueCode {
 		r.Logger.Error("R4 OTP API error", zap.String("code", otpResp.Message), zap.Any("payload", payload))
 		return errors.New("R4 OTP API returned an error")
 	}
@@ -151,7 +224,6 @@ type ValidateDebitInmediateResponse struct {
 
 // ValidateImmediateDebit validates an immediate debit transaction using the provided OTP
 func (r *r4Service) ValidateImmediateDebit(ctx context.Context, req *models.ValidateOTPRequest) (*models.ValidateDebitInmediateResponse, error) {
-
 	hmacInput := req.Bank + req.DNI + req.Phone + fmt.Sprintf("%.2f", req.Amount) + req.OTP
 	payload := map[string]string{
 		"Banco":    req.Bank,
@@ -163,7 +235,7 @@ func (r *r4Service) ValidateImmediateDebit(ctx context.Context, req *models.Vali
 		"Concepto": req.Concept,
 	}
 
-	resp, err := r.r4Client.Do(ctx, hmacInput, payload, "DebitoInmediato")
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, validateImmediateDebitEndpoint)
 	if err != nil {
 		r.Logger.Error(err.Error(), zap.Any("payload", payload))
 		return nil, err
@@ -220,7 +292,7 @@ func (r *r4Service) GetOperationByID(ctx context.Context, operationID string) (*
 	payload := map[string]string{
 		"id": operationID,
 	}
-	resp, err := r.r4Client.Do(ctx, hmacInput, payload, "ConsultarOperaciones")
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, getOperationByIDEndpoint)
 	if err != nil {
 		r.Logger.Error(err.Error(), zap.Any("payload", payload))
 		return nil, err
@@ -232,11 +304,91 @@ func (r *r4Service) GetOperationByID(ctx context.Context, operationID string) (*
 		return nil, err
 	}
 
-	r.Logger.Info("Operation response", zap.Any("operation", opResp))
+	r.Logger.Debug("Operation response", zap.Any("operation", opResp))
 
 	return &r4bank.GetOperationResponse{
 		Code:      opResp.Code,
 		Success:   opResp.Success,
 		Reference: opResp.Reference,
+	}, nil
+}
+
+// DirectDebitAccount debits a specified amount directly from a user's account
+func (r *r4Service) DirectDebitAccount(ctx context.Context, req *models.DebitDirectAccountRequest) (*models.DebitDirectAccountResponse, error) {
+	hmacInput := req.Account
+	payload := map[string]string{
+		"cuenta":   req.Account,
+		"docId":    req.DNI,
+		"monto":    fmt.Sprintf("%.2f", *req.Amount),
+		"nombre":   req.Name,
+		"concepto": req.Concept,
+	}
+
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, directDebitAccountEndpoint)
+	if err != nil {
+		r.Logger.Error(err.Error(), zap.Any("payload", payload))
+		return nil, err
+	}
+
+	var debitResp r4bank.DebitDirectAccountResponse
+	if err := json.Unmarshal(resp, &debitResp); err != nil {
+		r.Logger.Error(err.Error(), zap.Any("response", string(resp)))
+		return nil, err
+	}
+
+	if debitResp.Code != sendOperationTrueCode {
+		r.Logger.Error("R4 Debit Direct Account API error", zap.String("code", debitResp.Code), zap.Any("payload", payload))
+		return nil, errors.New("R4 Debit Direct Account API returned an error")
+	}
+
+	operation, err := r.getDirectDebitResponse(ctx, debitResp.UUID)
+	if err != nil {
+		r.Logger.Error(err.Error(), zap.Any("operationID", debitResp.UUID))
+		return nil, fmt.Errorf("error obteniendo estado de la operación: %w", err)
+	}
+
+	return &models.DebitDirectAccountResponse{
+		ID:        debitResp.UUID,
+		Code:      operation.Code,
+		Message:   debitResp.Message,
+		Reference: operation.Reference,
+		Success:   operation.Success,
+	}, nil
+}
+
+func (r *r4Service) DirectDebitPhone(ctx context.Context, req *models.DebitDirectPhoneRequest) (*models.DebitDirectPhoneResponse, error) {
+	hmacInput := req.Phone
+	payload := map[string]string{
+		"telefono": req.Phone,
+		"docId":    req.DNI,
+		"nombre":   req.Name,
+		"banco":    req.Bank,
+		"monto":    fmt.Sprintf("%.2f", *req.Amount),
+		"concepto": req.Concept,
+	}
+
+	resp, err := r.r4Client.Do(ctx, hmacInput, payload, directDebitPhoneEndpoint)
+	if err != nil {
+		r.Logger.Error(err.Error(), zap.Any("payload", payload))
+		return nil, err
+	}
+
+	var debitResp r4bank.DebitDirectPhoneResponse
+	if err := json.Unmarshal(resp, &debitResp); err != nil {
+		r.Logger.Error(err.Error(), zap.Any("response", string(resp)))
+		return nil, err
+	}
+
+	var success bool
+	if _, ok := _DebitInmediateSpecialResponse[debitResp.Code]; ok {
+		success = true
+	}
+
+	return &models.DebitDirectPhoneResponse{
+		ID:        debitResp.UUID,
+		Code:      debitResp.Code,
+		Message:   debitResp.Message,
+		Reference: "",
+		Success:   success,
 	}, nil
 }
