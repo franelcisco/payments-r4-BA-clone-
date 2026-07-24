@@ -97,3 +97,41 @@ func (p *R4Handler) HandleGetOperationByID(c *gin.Context) {
 
 	c.JSON(http.StatusOK, resp)
 }
+
+// HandleDirectDebitAccount handles requests to debit a specified amount directly from a user's account
+func (p *R4Handler) HandleDirectDebitAccount(c *gin.Context) {
+	var req models.DebitDirectAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Printf("Error binding JSON: %v\n", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	resp, err := p.r4Service.DirectDebitAccount(c, &req)
+	if err != nil {
+		fmt.Printf("Error processing DirectDebitAccount request: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// HandleDirectDebitPhone handles requests to debit directly from a user's phone number
+func (p *R4Handler) HandleDirectDebitPhone(c *gin.Context) {
+	var req models.DebitDirectPhoneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Printf("Error binding JSON: %v\n", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	resp, err := p.r4Service.DirectDebitPhone(c, &req)
+	if err != nil {
+		fmt.Printf("Error processing DirectDebitPhone request: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}

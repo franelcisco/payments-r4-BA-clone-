@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"bone_appetit_r4_service/internal/config"
 	"bone_appetit_r4_service/internal/handlers"
+	"bone_appetit_r4_service/internal/repositories"
 	"bone_appetit_r4_service/internal/routers"
 	"bone_appetit_r4_service/internal/services"
 	"bone_appetit_r4_service/pkg/db"
@@ -19,7 +21,6 @@ import (
 	"bone_appetit_r4_service/pkg/logs"
 	"bone_appetit_r4_service/pkg/middleware"
 	"bone_appetit_r4_service/pkg/r4bank"
-	"fmt"
 )
 
 func main() {
@@ -45,7 +46,7 @@ func main() {
 		sslmode = "sslmode=" + sslmode
 	}
 
-	//connect the database
+	// connect the database
 	connStr := fmt.Sprintf("host=%s port=%s user=%s "+
 		"password=%s dbname=%s %s",
 		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, sslmode)
@@ -83,9 +84,12 @@ func main() {
 	r4BoneRestClient := r4bank.NewClient(cfg.R4BoneEntryPoint, cfg.R4BoneCommerceToken, logger)
 	r4AppaRestClient := r4bank.NewClient(cfg.R4APPAEntryPoint, cfg.R4APPACommerceToken, logger)
 
+	// Init repositories
+	bankRepo := repositories.NewBankRepository(gormDB, logger)
+
 	// initialize services
-	r4BoneService := services.NewR4Service(logger, r4BoneRestClient)
-	r4AppaService := services.NewR4Service(logger, r4AppaRestClient)
+	r4BoneService := services.NewR4Service(logger, r4BoneRestClient, bankRepo)
+	r4AppaService := services.NewR4Service(logger, r4AppaRestClient, bankRepo)
 	webhookService := services.NewWebhookService(gormDB, loc, logger)
 
 	// initialize middleware

@@ -37,3 +37,15 @@ type GetOperationResponse struct {
 	Reference string `json:"reference"`
 	Success   bool   `json:"success"`
 }
+
+type DebitDirectAccountResponse struct {
+	Code    string `json:"codigo"`
+	Message string `json:"mensaje"`
+	UUID    string `json:"uuid"`
+}
+
+type DebitDirectPhoneResponse struct {
+	Code    string `json:"codigo"`
+	Message string `json:"mensaje"`
+	UUID    string `json:"uuid"`
+}
