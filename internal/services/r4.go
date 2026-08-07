@@ -68,7 +68,7 @@ func NewR4Service(logger *zap.Logger, r4Client *r4bank.RestClient, bankRepo repo
 
 // getDirectDebitResponse is a helper function to process the response from direct debit operations
 func (r *r4Service) getDirectDebitResponse(ctx context.Context, id string) (*r4bank.GetOperationResponse, error) {
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	respCh := make(chan *r4bank.GetOperationResponse)
 
