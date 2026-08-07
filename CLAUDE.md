@@ -81,7 +81,7 @@ All payment timestamps are written in **`America/Caracas`** (loaded once in `mai
 Two patterns coexist for waiting on async R4Bank operations:
 
 - `ValidateImmediateDebit`: up to **7 polls** of `GetOperationByID` with `3s` sleeps; breaks when code ≠ `"AC00"` (in-progress sentinel). Looks up the final code in `_DebitInmediateSpecialResponse` for a human-readable message.
-- `DirectDebitAccount`: `getDirectDebitResponse` ticks every **2s for up to 60s** (`context.WithTimeout`) until code ≠ `"AC00"`.
+- `DirectDebitAccount`: `getDirectDebitResponse` ticks every **2s for up to 120s** (`context.WithTimeout`) until code ≠ `"AC00"`.
 
 If you add another endpoint that returns an async operation ID, reuse `getDirectDebitResponse` rather than rolling a third polling loop.
 
